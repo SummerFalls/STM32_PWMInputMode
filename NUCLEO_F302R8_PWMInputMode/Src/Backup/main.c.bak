@@ -79,88 +79,103 @@ void SystemClock_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 void GTek_PWM_InputMode_Init(void) {
-    LL_TIM_EnableCounter(TIM15);
     LL_TIM_CC_EnableChannel(TIM15, LL_TIM_CHANNEL_CH1);
     LL_TIM_CC_EnableChannel(TIM15, LL_TIM_CHANNEL_CH2);
+
+    LL_TIM_EnableCounter(TIM15);
+
+    LL_TIM_DisableIT_UPDATE(TIM15);
 //    LL_TIM_EnableIT_UPDATE(TIM15);
     LL_TIM_EnableIT_CC1(TIM15);
     LL_TIM_EnableIT_CC2(TIM15);
 }
 
-/*
- * PWM 输入模式_TI信号输入引脚为TIM15_CH2
- * CH1_Indirect_下降沿触发_PWM高电平脉宽
- * CH2___Direct_上升沿触发_PWM周期
- *
- * 以下请参照参考手册
- * 654页: CKD[1:0]位(Clock Division)
- * 665页：ICxF[3:0]位(Input Capture x Filter)
- *
- * TIMx_CLK = HCLK / (Prescaler + 1) = 64 MHz / (0 + 1) = 64 MHz
- * f(DTS) = TIMx_CLK / CKD = 64 MHz / 1 = 64 MHz
- * 因为 ICxF[3:0] = 2，所以：
- * 1. (ICxF[3:0] = 0   ) f(sampling) = f(DTS)
- *    (ICxF[3:0] = 1~3 ) f(sampling) = TIMx_CLK
- *    (ICxF[3:0] = 4~15) f(sampling) = f(DTS) / Y
- * 2. 连续检测周期数 N = 4
- *
- * 采样周期宽度 = 1s / f(sampling) = 1/64 us
- * 连续采样周期宽度 = 采样周期宽度 * N = 1/16 us
- * 所以如果输入电平信号宽度小于 1/16 us 时，会被滤除，不被采样
- *
- * 假设输入的PWM占空比精度为：1%
- * 则必须满足输入的PWM_Period >= 1/16 us * 100 = 6.25us
- * 即允许采样的最大PWM频率为：160 KHz
- *
- * PWM_Freq = f(sampling) / g_PWM_IN.Period
- * PWM_DutyCycle = g_PWM_IN.PulseWidth / g_PWM_IN.Period
- */
+/*******************************************************************************
+* @name   : TIM1_BRK_TIM15_IRQHandler
+* @brief  : TIM1_刹车__TIM15_PWM输入模式
+* @param  : void
+* @retval : void
+* @note   :
+*           PWM 输入模式_TI信号输入引脚为TIM15_CH2
+*           CH1_Indirect_下降沿触发_PWM高电平脉宽
+*           CH2___Direct_上升沿触发_PWM周期
+*
+*           以下请参照参考手册
+*           654页: CKD[1:0]位(Clock Division)
+*           665页：ICxF[3:0]位(Input Capture x Filter)
+*
+*           TIMx_CLK = HCLK / (Prescaler + 1) = 64 MHz / (0 + 1) = 64 MHz
+*           f(DTS) = TIMx_CLK / CKD = 64 MHz / 1 = 64 MHz
+*           因为 ICxF[3:0] = 0，所以：
+*           1. (ICxF[3:0] = 0   ) f(sampling) = f(DTS)
+*              (ICxF[3:0] = 1~3 ) f(sampling) = TIMx_CLK
+*              (ICxF[3:0] = 4~15) f(sampling) = f(DTS) / Y
+*           2. 连续检测周期数 N = 1
+*
+*           采样周期宽度 = 1s / f(sampling) = 1/64 us
+*           连续采样周期宽度 = 采样周期宽度 * N = 1/64 us
+*           所以如果输入电平信号宽度小于 1/64 us 时，会被滤除，不被采样
+*
+*           假设输入的PWM占空比精度为：1%
+*           则必须满足输入的PWM_Period >= 1/64 us * 100 = 1.5625us
+*           即理论允许采样的最大PWM频率为：640 KHz
+*
+*           PWM_Freq = f(sampling) / g_PWM_IN.Period
+*           PWM_DutyCycle = g_PWM_IN.PulseWidth / g_PWM_IN.Period
+*
+*           测试输入PWM 1 KHz ~ 100 KHz
+*******************************************************************************/
 void TIM1_BRK_TIM15_IRQHandler(void) {
-//    if (LL_TIM_IsActiveFlag_CC1(TIM15) != RESET) {
-//        LL_TIM_ClearFlag_CC1(TIM15);
-//
-//        g_TIM_IT_CNT.TIM15_CC1++;
-//    }
+    if ((LL_TIM_IsActiveFlag_UPDATE(TIM15) != RESET) && (LL_TIM_IsEnabledIT_UPDATE(TIM15) != RESET)) {
+        LL_TIM_ClearFlag_UPDATE(TIM15);
 
-    if (LL_TIM_IsActiveFlag_CC2(TIM15) != RESET) {
+//        printf("\r\n__UPDATE 溢出__\r\n");
+    }
+
+    if ((LL_TIM_IsActiveFlag_CC1(TIM15) != RESET) && (LL_TIM_IsEnabledIT_CC1(TIM15) != RESET)) {
+        LL_TIM_ClearFlag_CC1(TIM15);
+
+//        g_TIM_IT_CNT.TIM15_CC1++;
+    }
+
+    if ((LL_TIM_IsActiveFlag_CC2(TIM15) != RESET) && (LL_TIM_IsEnabledIT_CC2(TIM15) != RESET)) {
         LL_TIM_ClearFlag_CC2(TIM15);
 
-        g_TIM_IT_CNT.TIM15_CC2++;
+//        g_TIM_IT_CNT.TIM15_CC2++;
 
-        g_PWM_IN.Period = LL_TIM_IC_GetCaptureCH2(TIM15) + 65535 * g_PWM_IN.CC2_OverflowCnt;
+        g_PWM_IN.Period = LL_TIM_IC_GetCaptureCH2(TIM15) + 65536 * g_PWM_IN.CC2_OverflowCnt;
 
         /* g_PWM_IN.Period != 0 说明第二个上升沿触发，一个完整的PWM周期结束了，同时也避免了除零异常 */
         if (g_PWM_IN.Period != 0) {
-//            g_PWM_IN.Period = g_PWM_IN.Period + 1;
-            g_PWM_IN.PulseWidth = (LL_TIM_IC_GetCaptureCH1(TIM15) + 0) + 65535 * g_PWM_IN.CC1_OverflowCnt;
-            g_PWM_IN.CC2_OverflowCnt = 0;
-            g_PWM_IN.CC1_OverflowCnt = 0;
+            g_PWM_IN.Period = g_PWM_IN.Period + 1;
+            g_PWM_IN.PulseWidth = (LL_TIM_IC_GetCaptureCH1(TIM15) + 1) + 65536 * g_PWM_IN.CC1_OverflowCnt;
             g_PWM_IN.DutyCycle = (g_PWM_IN.PulseWidth * 100) / g_PWM_IN.Period;
             g_PWM_IN.Frequency = F_SAMPLING / g_PWM_IN.Period;
+
+//            printf("%lu 占空比：\t%lu %%\t频率：\t%lu Hz\r\n", g_Cnt++, g_PWM_IN.DutyCycle, g_PWM_IN.Frequency);
         }
+
+        g_PWM_IN.CC2_OverflowCnt = 0;
+        g_PWM_IN.CC1_OverflowCnt = 0;
     }
 
-    if (LL_TIM_IsActiveFlag_CC1OVR(TIM15) != RESET) {
+    if ((LL_TIM_IsActiveFlag_CC1OVR(TIM15) != RESET) && (LL_TIM_IsEnabledIT_CC1(TIM15) != RESET)) {
         LL_TIM_ClearFlag_CC1OVR(TIM15);
 
+        g_TIM_IT_CNT.TIM15_CC1++;
         g_PWM_IN.CC1_OverflowCnt++;
 
 //        printf("\r\n__CC1 捕获溢出__\r\n");
     }
 
-    if (LL_TIM_IsActiveFlag_CC2OVR(TIM15) != RESET) {
+    if ((LL_TIM_IsActiveFlag_CC2OVR(TIM15) != RESET) && (LL_TIM_IsEnabledIT_CC2(TIM15) != RESET)) {
         LL_TIM_ClearFlag_CC2OVR(TIM15);
 
+        g_TIM_IT_CNT.TIM15_CC2++;
         g_PWM_IN.CC2_OverflowCnt++;
 
 //        printf("\r\n__CC2 捕获溢出__\r\n");
     }
-
-//    if (LL_TIM_IsActiveFlag_UPDATE(TIM15) != RESET) {
-//        LL_TIM_ClearFlag_UPDATE(TIM15);
-//
-////        printf("\r\n__UPDATE 溢出__\r\n");
-//    }
 }
 /* USER CODE END 0 */
 
@@ -215,7 +230,7 @@ int main(void) {
     /* Infinite loop */
     /* USER CODE BEGIN WHILE */
     while (1) {
-        LL_mDelay(1000);
+        LL_mDelay(100);
         printf("%lu 占空比：\t%lu %%\t频率：\t%lu Hz\r\n", g_Cnt++, g_PWM_IN.DutyCycle, g_PWM_IN.Frequency);
         /* USER CODE END WHILE */
 

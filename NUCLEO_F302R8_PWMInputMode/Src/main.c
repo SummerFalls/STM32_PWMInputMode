@@ -53,7 +53,7 @@ typedef struct {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define F_SAMPLING 64000000UL /* PWM输入捕获采样频率_单位: Hz */
+#define F_SAMPLING 500000UL /* PWM输入捕获采样频率_单位: Hz */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -90,69 +90,76 @@ void GTek_PWM_InputMode_Init(void) {
     LL_TIM_EnableIT_CC2(TIM15);
 }
 
-/*
- * PWM 输入模式_TI信号输入引脚为TIM15_CH2
- * CH1_Indirect_下降沿触发_PWM高电平脉宽
- * CH2___Direct_上升沿触发_PWM周期
- *
- * 以下请参照参考手册
- * 654页: CKD[1:0]位(Clock Division)
- * 665页：ICxF[3:0]位(Input Capture x Filter)
- *
- * TIMx_CLK = HCLK / (Prescaler + 1) = 64 MHz / (0 + 1) = 64 MHz
- * f(DTS) = TIMx_CLK / CKD = 64 MHz / 1 = 64 MHz
- * 因为 ICxF[3:0] = 0，所以：
- * 1. (ICxF[3:0] = 0   ) f(sampling) = f(DTS)
- *    (ICxF[3:0] = 1~3 ) f(sampling) = TIMx_CLK
- *    (ICxF[3:0] = 4~15) f(sampling) = f(DTS) / Y
- * 2. 连续检测周期数 N = 1
- *
- * 采样周期宽度 = 1s / f(sampling) = 1/64 us
- * 连续采样周期宽度 = 采样周期宽度 * N = 1/64 us
- * 所以如果输入电平信号宽度小于 1/64 us 时，会被滤除，不被采样
- *
- * 假设输入的PWM占空比精度为：1%
- * 则必须满足输入的PWM_Period >= 1/64 us * 100 = 1.5625us
- * 即理论允许采样的最大PWM频率为：640 KHz
- *
- * PWM_Freq = f(sampling) / g_PWM_IN.Period
- * PWM_DutyCycle = g_PWM_IN.PulseWidth / g_PWM_IN.Period
- *
- * 测试输入PWM 1 KHz ~ 100 KHz
- */
+/*******************************************************************************
+* @name   : TIM1_BRK_TIM15_IRQHandler
+* @brief  : TIM1_刹车__TIM15_PWM输入模式
+* @param  : void
+* @retval : void
+* @note   :
+*           PWM 输入模式_TI信号输入引脚为TIM15_CH2
+*           CH1_Indirect_下降沿触发_PWM高电平脉宽
+*           CH2___Direct_上升沿触发_PWM周期
+*
+*           以下请参照参考手册
+*           654页: CKD[1:0]位(Clock Division)
+*           665页：ICxF[3:0]位(Input Capture x Filter)
+*
+*           TIMx_CLK = HCLK / (Prescaler + 1) = 64 MHz / (127 + 1) = 500 KHz
+*           f(DTS) = TIMx_CLK / CKD = 500 KHz / 1 = 500 KHz
+*           因为 ICxF[3:0] = 0，所以：
+*           1. (ICxF[3:0] = 0   ) f(sampling) = f(DTS)
+*              (ICxF[3:0] = 1~3 ) f(sampling) = TIMx_CLK
+*              (ICxF[3:0] = 4~15) f(sampling) = f(DTS) / Y
+*           2. 连续检测周期数 N = 1
+*
+*           采样周期宽度 = 1s / f(sampling) = 2 us
+*           连续采样周期宽度 = 采样周期宽度 * N = 2 us
+*           所以如果输入电平信号宽度小于 2 us 时，会被滤除，不被采样
+*
+*           假设输入的PWM占空比精度为：1%
+*           则必须满足输入的PWM_Period >= 2 us * 100 = 200us
+*           即理论允许采样的最大PWM频率为：5 KHz
+*
+*           PWM_Freq = f(sampling) / g_PWM_IN.Period
+*           PWM_DutyCycle = g_PWM_IN.PulseWidth / g_PWM_IN.Period
+*
+*           测试输入PWM 8 Hz ~ 10 KHz
+*******************************************************************************/
 void TIM1_BRK_TIM15_IRQHandler(void) {
-    if (LL_TIM_IsActiveFlag_CC1(TIM15) != RESET) {
+    if ((LL_TIM_IsActiveFlag_UPDATE(TIM15) != RESET) && (LL_TIM_IsEnabledIT_UPDATE(TIM15) != RESET)) {
+        LL_TIM_ClearFlag_UPDATE(TIM15);
+
+//        printf("\r\n__UPDATE 溢出__\r\n");
+    }
+
+    if ((LL_TIM_IsActiveFlag_CC1(TIM15) != RESET) && (LL_TIM_IsEnabledIT_CC1(TIM15) != RESET)) {
         LL_TIM_ClearFlag_CC1(TIM15);
 
 //        g_TIM_IT_CNT.TIM15_CC1++;
     }
 
-    if (LL_TIM_IsActiveFlag_CC2(TIM15) != RESET) {
+    if ((LL_TIM_IsActiveFlag_CC2(TIM15) != RESET) && (LL_TIM_IsEnabledIT_CC2(TIM15) != RESET)) {
         LL_TIM_ClearFlag_CC2(TIM15);
 
 //        g_TIM_IT_CNT.TIM15_CC2++;
 
-        if (g_PWM_IN.CC2_OverflowCnt >= 65535) {
-            printf("\r\ng_PWM_IN.Period 溢出32位无符号整型最大范围\r\n");
-        } else {
-            g_PWM_IN.Period = LL_TIM_IC_GetCaptureCH2(TIM15) + 65536 * g_PWM_IN.CC2_OverflowCnt;
+        g_PWM_IN.Period = LL_TIM_IC_GetCaptureCH2(TIM15) + 65536 * g_PWM_IN.CC2_OverflowCnt;
 
-            /* g_PWM_IN.Period != 0 说明第二个上升沿触发，一个完整的PWM周期结束了，同时也避免了除零异常 */
-            if (g_PWM_IN.Period != 0) {
-                g_PWM_IN.Period = g_PWM_IN.Period + 1;
-                g_PWM_IN.PulseWidth = (LL_TIM_IC_GetCaptureCH1(TIM15) + 1) + 65536 * g_PWM_IN.CC1_OverflowCnt;
-                g_PWM_IN.DutyCycle = (g_PWM_IN.PulseWidth * 100) / g_PWM_IN.Period;
-                g_PWM_IN.Frequency = F_SAMPLING / g_PWM_IN.Period;
+        /* g_PWM_IN.Period != 0 说明第二个上升沿触发，一个完整的PWM周期结束了，同时也避免了除零异常 */
+        if (g_PWM_IN.Period != 0) {
+            g_PWM_IN.Period = g_PWM_IN.Period + 1;
+            g_PWM_IN.PulseWidth = (LL_TIM_IC_GetCaptureCH1(TIM15) + 1) + 65536 * g_PWM_IN.CC1_OverflowCnt;
+            g_PWM_IN.DutyCycle = (g_PWM_IN.PulseWidth * 100) / g_PWM_IN.Period;
+            g_PWM_IN.Frequency = F_SAMPLING / g_PWM_IN.Period;
 
-//                printf("%lu 占空比：\t%lu %%\t频率：\t%lu Hz\r\n", g_Cnt++, g_PWM_IN.DutyCycle, g_PWM_IN.Frequency);
-            }
+//            printf("%lu 占空比：\t%lu %%\t频率：\t%lu Hz\r\n", g_Cnt++, g_PWM_IN.DutyCycle, g_PWM_IN.Frequency);
         }
 
         g_PWM_IN.CC2_OverflowCnt = 0;
         g_PWM_IN.CC1_OverflowCnt = 0;
     }
 
-    if (LL_TIM_IsActiveFlag_CC1OVR(TIM15) != RESET) {
+    if ((LL_TIM_IsActiveFlag_CC1OVR(TIM15) != RESET) && (LL_TIM_IsEnabledIT_CC1(TIM15) != RESET)) {
         LL_TIM_ClearFlag_CC1OVR(TIM15);
 
         g_TIM_IT_CNT.TIM15_CC1++;
@@ -161,7 +168,7 @@ void TIM1_BRK_TIM15_IRQHandler(void) {
 //        printf("\r\n__CC1 捕获溢出__\r\n");
     }
 
-    if (LL_TIM_IsActiveFlag_CC2OVR(TIM15) != RESET) {
+    if ((LL_TIM_IsActiveFlag_CC2OVR(TIM15) != RESET) && (LL_TIM_IsEnabledIT_CC2(TIM15) != RESET)) {
         LL_TIM_ClearFlag_CC2OVR(TIM15);
 
         g_TIM_IT_CNT.TIM15_CC2++;
@@ -169,51 +176,48 @@ void TIM1_BRK_TIM15_IRQHandler(void) {
 
 //        printf("\r\n__CC2 捕获溢出__\r\n");
     }
-
-//    if (LL_TIM_IsActiveFlag_UPDATE(TIM15) != RESET) {
-//        LL_TIM_ClearFlag_UPDATE(TIM15);
-//
-////        printf("\r\n__UPDATE 溢出__\r\n");
-//    }
 }
 /* USER CODE END 0 */
 
 /**
- * @brief  The application entry point.
- * @retval int
- */
-int main(void) {
-    /* USER CODE BEGIN 1 */
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+  /* USER CODE BEGIN 1 */
 
-    /* USER CODE END 1 */
+  /* USER CODE END 1 */
 
-    /* MCU Configuration--------------------------------------------------------*/
 
-    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  /* MCU Configuration--------------------------------------------------------*/
 
-    LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_SYSCFG);
-    LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_PWR);
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
 
-    NVIC_SetPriorityGrouping(NVIC_PRIORITYGROUP_0);
 
-    /* System interrupt init*/
+  LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_SYSCFG);
+  LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_PWR);
 
-    /* USER CODE BEGIN Init */
+  NVIC_SetPriorityGrouping(NVIC_PRIORITYGROUP_0);
 
-    /* USER CODE END Init */
+  /* System interrupt init*/
 
-    /* Configure the system clock */
-    SystemClock_Config();
+  /* USER CODE BEGIN Init */
 
-    /* USER CODE BEGIN SysInit */
+  /* USER CODE END Init */
 
-    /* USER CODE END SysInit */
+  /* Configure the system clock */
+  SystemClock_Config();
 
-    /* Initialize all configured peripherals */
-    MX_GPIO_Init();
-    MX_TIM15_Init();
-    MX_USART2_UART_Init();
-    /* USER CODE BEGIN 2 */
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_TIM15_Init();
+  MX_USART2_UART_Init();
+  /* USER CODE BEGIN 2 */
     LL_RCC_GetSystemClocksFreq(&RCC_Clocks);
 
     printf("------------ CLK Freq ------------\r\n");
@@ -224,57 +228,62 @@ int main(void) {
     printf("----------------------------------\r\n\r\n\r\n");
 
     GTek_PWM_InputMode_Init();
-    /* USER CODE END 2 */
+  /* USER CODE END 2 */
 
-    /* Infinite loop */
-    /* USER CODE BEGIN WHILE */
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
     while (1) {
         LL_mDelay(100);
         printf("%lu 占空比：\t%lu %%\t频率：\t%lu Hz\r\n", g_Cnt++, g_PWM_IN.DutyCycle, g_PWM_IN.Frequency);
-        /* USER CODE END WHILE */
+    /* USER CODE END WHILE */
 
-        /* USER CODE BEGIN 3 */
+    /* USER CODE BEGIN 3 */
     }
-    /* USER CODE END 3 */
+  /* USER CODE END 3 */
 }
 
 /**
- * @brief System Clock Configuration
- * @retval None
- */
-void SystemClock_Config(void) {
-    LL_FLASH_SetLatency(LL_FLASH_LATENCY_2);
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  LL_FLASH_SetLatency(LL_FLASH_LATENCY_2);
 
-    if (LL_FLASH_GetLatency() != LL_FLASH_LATENCY_2) {
-        Error_Handler();
-    }
-    LL_RCC_HSI_Enable();
+   if(LL_FLASH_GetLatency() != LL_FLASH_LATENCY_2)
+  {
+  Error_Handler();
+  }
+  LL_RCC_HSI_Enable();
 
-    /* Wait till HSI is ready */
-    while (LL_RCC_HSI_IsReady() != 1) {
+   /* Wait till HSI is ready */
+  while(LL_RCC_HSI_IsReady() != 1)
+  {
 
-    }
-    LL_RCC_HSI_SetCalibTrimming(16);
-    LL_RCC_PLL_ConfigDomain_SYS(LL_RCC_PLLSOURCE_HSI_DIV_2, LL_RCC_PLL_MUL_16);
-    LL_RCC_PLL_Enable();
+  }
+  LL_RCC_HSI_SetCalibTrimming(16);
+  LL_RCC_PLL_ConfigDomain_SYS(LL_RCC_PLLSOURCE_HSI_DIV_2, LL_RCC_PLL_MUL_16);
+  LL_RCC_PLL_Enable();
 
-    /* Wait till PLL is ready */
-    while (LL_RCC_PLL_IsReady() != 1) {
+   /* Wait till PLL is ready */
+  while(LL_RCC_PLL_IsReady() != 1)
+  {
 
-    }
-    LL_RCC_SetAHBPrescaler(LL_RCC_SYSCLK_DIV_1);
-    LL_RCC_SetAPB1Prescaler(LL_RCC_APB1_DIV_2);
-    LL_RCC_SetAPB2Prescaler(LL_RCC_APB1_DIV_1);
-    LL_RCC_SetSysClkSource(LL_RCC_SYS_CLKSOURCE_PLL);
+  }
+  LL_RCC_SetAHBPrescaler(LL_RCC_SYSCLK_DIV_1);
+  LL_RCC_SetAPB1Prescaler(LL_RCC_APB1_DIV_2);
+  LL_RCC_SetAPB2Prescaler(LL_RCC_APB1_DIV_1);
+  LL_RCC_SetSysClkSource(LL_RCC_SYS_CLKSOURCE_PLL);
 
-    /* Wait till System clock is ready */
-    while (LL_RCC_GetSysClkSource() != LL_RCC_SYS_CLKSOURCE_STATUS_PLL) {
+   /* Wait till System clock is ready */
+  while(LL_RCC_GetSysClkSource() != LL_RCC_SYS_CLKSOURCE_STATUS_PLL)
+  {
 
-    }
-    LL_Init1msTick(64000000);
-    LL_SYSTICK_SetClkSource(LL_SYSTICK_CLKSOURCE_HCLK);
-    LL_SetSystemCoreClock(64000000);
-    LL_RCC_SetTIMClockSource(LL_RCC_TIM15_CLKSOURCE_PCLK2);
+  }
+  LL_Init1msTick(64000000);
+  LL_SYSTICK_SetClkSource(LL_SYSTICK_CLKSOURCE_HCLK);
+  LL_SetSystemCoreClock(64000000);
+  LL_RCC_SetTIMClockSource(LL_RCC_TIM15_CLKSOURCE_PCLK2);
 }
 
 /* USER CODE BEGIN 4 */
@@ -282,30 +291,31 @@ void SystemClock_Config(void) {
 /* USER CODE END 4 */
 
 /**
- * @brief  This function is executed in case of error occurrence.
- * @retval None
- */
-void Error_Handler(void) {
-    /* USER CODE BEGIN Error_Handler_Debug */
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
     /* User can add his own implementation to report the HAL error return state */
 
-    /* USER CODE END Error_Handler_Debug */
+  /* USER CODE END Error_Handler_Debug */
 }
 
 #ifdef  USE_FULL_ASSERT
 /**
- * @brief  Reports the name of the source file and the source line number
- *         where the assert_param error has occurred.
- * @param  file: pointer to the source file name
- * @param  line: assert_param error line source number
- * @retval None
- */
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
 void assert_failed(char *file, uint32_t line)
 {
-    /* USER CODE BEGIN 6 */
+  /* USER CODE BEGIN 6 */
     /* User can add his own implementation to report the file name and line number,
      tex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-    /* USER CODE END 6 */
+  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
 
