@@ -1,21 +1,12 @@
 /* USER CODE BEGIN Header */
-//       ____
-//      /___/\_
-//     _\   \/_/\__
-//   __\       \/_/\
-//   \   __    __ \ \        MIT License. Copyright (c) 2019 SummerFalls.
-//  __\  \_\   \_\ \ \   __
-// /_/\\   __   __  \ \_/_/\
-// \_\/_\__\/\__\/\__\/_\_\/
-//    \_\/_/\       /_\_\/
-//       \_\/       \_\/
 /*
-* @ åç§°: main.h
-* @ ä½œè€…: SummerFalls
-* @ æ—¥æœŸ: 2019-8-30
-* @ ç‰ˆæœ¬: V1.0
-* @ æè¿°:
-*/
+ * @ Ãû³Æ: main.h
+ * @ ×÷Õß: SummerFalls
+ * @ ÈÕÆÚ: 2019-8-30
+ * @ °æ±¾: V1.0
+ * @ ÃèÊö:
+ * MIT License. Copyright (c) 2019 SummerFalls.
+ */
 /* USER CODE END Header */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
